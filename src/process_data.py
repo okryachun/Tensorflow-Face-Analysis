@@ -63,7 +63,6 @@ def build_df(path, dataset_dict, ext="jpg"):
         except ValueError:
             # Raised when img_path is incorrectly formatted
             raise ImgAttributeError
-            return
     
     image_files = glob.glob(os.path.join(path, "*.%s" % ext))
     attribute_list = []
