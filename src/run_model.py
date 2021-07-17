@@ -5,14 +5,15 @@ Created on Mon Jun 21 15:35:13 2021
 @author: Oleg Kryachun
 """
 from tensorflow.keras.models import model_from_json
+import tensorflow as tf
 import numpy as np
 import cv2
 import sys
 import os
 
-
 # local import
 from process_data import get_model_vars
+
 
 class FaceNotFound(Exception):
     """Thrown when a face is not found on camera"""
@@ -27,28 +28,31 @@ def crop_face(img):
         img (np.array): images numpy matrix
     Returns
     -------
-        faces (np.array): cropped image of a detected face
+        face (np.array): cropped image of a detected face
     """
     try:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         face_cascade = cv2.CascadeClassifier('xml/haarcascade_frontalface_alt2.xml')    
         faces = face_cascade.detectMultiScale(gray, 1.05, 5)
-        
-        # extend face image by 5%
-        ext = round(img.shape[0] * 0.15)
-
+        face = np.array(0)
         # if face found
         if len(faces) > 0:
             (x, y, w, h) = faces[0]
+            
+            # extend the size of the face detected
+            ext = int(abs(h-y) * 0.5)
+            
             # test if extension fits on image, if not ext maximum amount
             if (y+h+ext) > img.shape[0]:
                 ext = img.shape[0] - h
-            faces = img[y:y + h + ext, x:x + w]
-    # if no faces detected, raise error
-    except:
+            face = img[y:y + h + ext, x:x + w]
+            
+    # if problem with extracting face, print error and raise FaceNotFound
+    except Exception as e:
+        print("Error1: ", e)
         raise FaceNotFound
     
-    return faces
+    return face
 
 
 def process_image(img, model_vars):
@@ -64,14 +68,11 @@ def process_image(img, model_vars):
     """
     width = model_vars["im_width"]
     height = model_vars["im_width"]
-    try:
-        img = crop_face(img)
-        img = cv2.resize(img, (width, height))
-        img = np.array(img) / 255.0
-        img = np.expand_dims(img, axis=0)
-    except:
-        raise FaceNotFound
-            
+    img = crop_face(img)
+    img = cv2.resize(img, (width, height))
+    img = np.array(img) / 255.0
+    img = np.expand_dims(img, axis=0)
+
     return img
 
 
@@ -119,13 +120,12 @@ def start_video(model, model_vars):
             try:
                 img = process_image(frame, model_vars)
             # Error processing image, attempt next frame
-            except FaceNotFound:
+            except:
                 counter = 49
                 continue
   
             age, race, gender = model.predict(img)
-            age, race, gender = process_results(age, race, gender,
-                                                model_vars)
+            age, race, gender = process_results(age, race, gender, model_vars)
             text = f"Age: {age}, Race: {race}, Gender: {gender}"
             print('Prediction: ', text)
             counter = 0
@@ -143,29 +143,31 @@ def start_video(model, model_vars):
     cv2.destroyAllWindows()
 
 
-def get_model(path='model/saved_model'):
-    """Load pretrained CNN model from model directory
+def get_model(path='saved_models/facenet_model'):
+    """Load pretrained CNN model from local directory
     
     Parameters
     -------
         path (str): path to saved json model
     Returns
     -------
-    model (Model): pretrained loaded tensorflow model
+        model (Model): pretrained loaded tensorflow model
     """
+    tf.keras.backend.clear_session()
     json_path = os.path.join(path , "model.json")
-    h5_path = os.path.join(path, "model.h5")
+    h5_path = os.path.join(path, "weights.h5")
     try:
         with open(json_path, 'r') as f:
             loaded_json_model = f.read()
+
         model = model_from_json(loaded_json_model)
         model.load_weights(h5_path)
     except:
         e = sys.exc_info()[0]
         print("Error: ", e)
-        print("Couldn't load model. "
-              "Check that model/model.h5 and model/model.json exist")
+        print(f"Couldn't load model. Check that {h5_path} and {json_path} exist")
         sys.exit(1)
+    
     return model
 
 
@@ -174,9 +176,9 @@ def analyze_picture(model, model_vars, img_path):
 
     Parameters
     ----------
-    img_path (str): image path
-    model_vars (dict): various variable values defined for the model
-    **args : arbitrary excess parameters from argsparse
+        model (Model): trained CNN model to analyze a face detect in picture
+        img_path (str): image path
+        model_vars (dict): various variable values defined for the model
     """
     img = cv2.imread(img_path)
     if img is None:
@@ -188,15 +190,25 @@ def analyze_picture(model, model_vars, img_path):
     except FaceNotFound:
         print("Couldn't find face in image.")
         return
+    except Exception as e:
+        print(e)
+        print("There was a problem processing this image")
+        return
 
     age, race, gender = model.predict(img_proc)
     age, race, gender = process_results(age, race, gender, model_vars)
-    
+
+    # shrink image if too large
+    im_shape = list(img.shape)
+    if any(i > 900 for i in im_shape):
+        scaler = 900/im_shape[0]
+        im_shape = (int(im_shape[1]*scaler) , int(im_shape[0]*scaler))
+        img = cv2.resize(img, im_shape)
+
     text = f"Age: {age}, Race: {race}, Gender: {gender}"
-
     put_text = optimize_text(text, img)
-
-    # Using cv2.putText() method
+    
+    # Display text on frame using cv2.putText() method
     cv2.putText(**put_text)
     cv2.imshow("Face Analyis", img)
     cv2.waitKey(0)
@@ -211,11 +223,13 @@ def run_model(model_path, **args):
         model_path (str): path to saved trained model
         **args : arbitrary parameters from argsparse
     """
+    print("Getting model", flush=True)
     model = get_model(model_path)
+    print("Model retrieved", flush=True)
     model_vars = get_model_vars()
     # start video analysis using model
     if args.get('video', False):
-        print("starting video")
+        print("starting video", flush=True)
         start_video(model, model_vars)
     # if not video, then individual image will be analyzed
     else:
@@ -224,13 +238,25 @@ def run_model(model_path, **args):
 
 
 def optimize_text(text, img):
+    """Adjust text font, size, location for image frame
+
+    Parameters
+    ----------
+        text (str): string to be displayed on a cv2 frame
+        img (np.array): img that will be displayed on frame
+
+    Returns
+    -------
+        put_text (dict): optimized parameter arguments for cv2.putText
+    """
     img_width, img_height, _ = img.shape
     font = cv2.FONT_HERSHEY_SIMPLEX
 
     scale = cv2.getFontScaleFromHeight(font, round(img_height*0.033))
     thickness = round(scale * 1.8)
 
-    text_size = {"text": text, "fontFace": font, "fontScale": scale, "thickness": thickness}
+    text_size = {"text": text, "fontFace": font,
+                 "fontScale": scale, "thickness": thickness}
 
     org = cv2.getTextSize(**text_size)[0]
     
