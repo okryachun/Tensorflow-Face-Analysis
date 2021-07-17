@@ -7,12 +7,14 @@ Created on Thu Jun 17 11:25:14 2021
 from skimage.exposure import adjust_gamma, adjust_sigmoid
 from tensorflow.keras.utils import to_categorical
 from skimage.util import random_noise
+from skimage.transform import rotate
 import pandas as pd
 import numpy as np
 import random
 import glob
 import cv2
 import os
+
 
 class ImgAttributeError(Exception):
     """Exception mostly for code readability."""
@@ -32,7 +34,7 @@ def build_df(path, dataset_dict, ext="jpg"):
         ext (str): image extension type. Default "jpg"
     Returns:
     ----------
-        pd.Dataframe: attributes extracted from file names
+        df (pd.Dataframe): attributes extracted from file names
                 [age, gender, gender_id, race, race_id, file]
     """
     def filename_parser(img_path):
@@ -81,7 +83,6 @@ def build_df(path, dataset_dict, ext="jpg"):
     return df
 
 
-
 class FaceDataGenerator():
     """Image data generator/processor for training/testing model."""
     
@@ -123,7 +124,7 @@ class FaceDataGenerator():
         return train_idx, valid_idx, test_idx
         
     def preprocess_image(self, img_path, augment):
-        """Open, resize, and normalize pixels of an image.
+        """Open, resize, normalize, and augment pixels of an image.
         
         Parameters:
         ----------
@@ -145,6 +146,7 @@ class FaceDataGenerator():
 
     def augment_img(self, img):
         """Randomly augment images to better represent webcam image quality.
+            As well as improve model performance
 
         Parameters
         ----------
@@ -153,7 +155,7 @@ class FaceDataGenerator():
         -------
             img (np.array): image pixel matrix
         """ 
-        n = random.randint(0,4)
+        n = random.randint(0,7)
         if n == 0:
             img = random_noise(img, var=0.002)
         elif n == 1:
@@ -164,6 +166,12 @@ class FaceDataGenerator():
             img = adjust_gamma(img, 2)
         elif n == 4:
             img = adjust_sigmoid(img)
+        elif n == 5:
+            img = rotate(img, angle=90)
+        elif n == 6:
+            img = rotate(img, angle=180)
+        elif n == 7:
+            img = rotate(img, angle=-90)
 
         return img
             
@@ -199,6 +207,9 @@ class FaceDataGenerator():
                 gender = person["gender_id"]
                 file_path = person["filename"]
 
+                # augment an image every other pass, add to img dataframe
+                # Note: this duplicates the image, adding the normal image
+                #       as well as the augmented image
                 if augment and is_training:
                     img = self.preprocess_image(file_path, True)
                     ages.append(age / self.max_age)
@@ -208,9 +219,9 @@ class FaceDataGenerator():
                     augment = False
                 else:
                     augment = True
-                    
-                img = self.preprocess_image(file_path, False)
                 
+                # add attributes to img dataframe
+                img = self.preprocess_image(file_path, False)
                 ages.append(age / self.max_age)
                 races.append(to_categorical(race, race_count))
                 genders.append(to_categorical(gender, gender_count))
@@ -222,12 +233,68 @@ class FaceDataGenerator():
                     y = [np.array(ages), np.array(races), np.array(genders)]
                     yield x, y
                     
+                    # empty list batches
                     images, ages, races, genders = [], [], [], []
 
             if not is_training:
                 break
 
 
+def adjust_underrepresented_age_images(df):
+    """Duplicate underrepresented age groups of images in dataframe.
+
+    Parameters
+    ----------
+        df (Dataframe): dataframe with images & attributes
+    Returns
+    -------
+        adjusted_df (Dataframe): dataframe with duplicated images 
+    """
+    def dup_probability(age):
+        largest_group = 7780
+        prob = [0,0]
+
+        if age >= 60 and age < 80:
+            prob = [0, 1800]
+        elif age < 10:
+            prob = [largest_group, 3200]
+        elif age >= 40 and age < 60:
+            prob = [largest_group, 4300]
+        elif age >= 30 and age < 40:
+            prob = [largest_group, 4300]
+        elif age >= 20 and age < 30:
+            prob = [largest_group, 0]
+            
+        return prob      
+
+    duplicated_rows = []
+    for idx in df.index:
+        row = df.iloc[idx]
+        age = row['age']
+        
+        # get probability for duplicating an image
+        weights = dup_probability(age)
+        
+        # choose randomly whether to duplicate with set probablity
+        duplicate = random.choices([False, True], weights, k=1)
+
+        # duplicate image adding to end of dataframe
+        if age > 80:
+            duplicated_rows.append(row)
+            duplicated_rows.append(row)
+            duplicated_rows.append(row)
+        elif age >= 10 and age < 20:
+            duplicated_rows.append(row)
+            duplicated_rows.append(row)
+        elif duplicate[0]:
+            duplicated_rows.append(row)
+    
+    df2 = pd.DataFrame(duplicated_rows)
+    df = pd.concat([df, df2])
+
+    return df
+            
+    
 def get_model_vars():
     """Define variables used across this program.
     
@@ -235,7 +302,6 @@ def get_model_vars():
     ------
         model_vars (dict): dict containing all variables and mapping dicts
     """
-    
     # dictionary to map image attributes to string values
     dataset_dict = {
         'race_id': {
@@ -259,8 +325,8 @@ def get_model_vars():
     
     model_vars = {
         'train_split': 0.7,
-        'im_width': 256,
-        'im_height': 256,
+        'im_width': 160,
+        'im_height': 160,
         'gender_count': 2,
         'race_count': 5,
         'max_age': 116,
