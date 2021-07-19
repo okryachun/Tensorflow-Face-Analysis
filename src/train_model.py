@@ -17,7 +17,6 @@ import os
 # local imports
 from data_visualization import plot_model_measure, pie_plot
 from process_data import adjust_underrepresented_age_images
-from run_model import get_model
 import process_data
 import build_model
 
@@ -39,7 +38,7 @@ def train_model(model_type, data_path, evaluate=False, **args):
 
     # create image attribute dataframe
     img_df = process_data.build_df(data_path, dataset_dict)
-    
+
     # explore data statistics
     plot_data_stats(img_df, "data_stats/raw_data_stats", save=True)
 

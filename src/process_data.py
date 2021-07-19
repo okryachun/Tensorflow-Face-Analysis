@@ -10,8 +10,10 @@ from skimage.util import random_noise
 from skimage.transform import rotate
 import pandas as pd
 import numpy as np
+import tarfile
 import random
 import glob
+import sys
 import cv2
 import os
 
@@ -21,14 +23,14 @@ class ImgAttributeError(Exception):
     pass
 
 
-def build_df(path, dataset_dict, ext="jpg"):
+def build_df(data_path, dataset_dict, ext="jpg"):
     """Build a Dataframe of attributes for a given `path` of files.
     
         1. Traverse files in `path` and send filename to filename_parser()
         2. Build a Dataframe of attributes for each file in `path`
     Parameters:
     ----------
-        path (str): relative or absolute path of image location
+        data_path (str): relative or absolute path of image location
         dataset_dict (dict): mapping of attribute values to strings
             ex: "gender": {"male": 1, "female": 0}
         ext (str): image extension type. Default "jpg"
@@ -49,7 +51,7 @@ def build_df(path, dataset_dict, ext="jpg"):
                 [age, gender, gender_id, race, race_id, filename]
         Raises:
         ----------
-            ImageAttributeError: rasied when `img_path` is incorrectly
+            ImageAttributeError: raised when `img_path` is incorrectly
                 formatted. build_df() skips this image file
         """
         try:
@@ -66,7 +68,32 @@ def build_df(path, dataset_dict, ext="jpg"):
             # Raised when img_path is incorrectly formatted
             raise ImgAttributeError
     
-    image_files = glob.glob(os.path.join(path, "*.%s" % ext))
+    # check if data path exists or extract compressed data
+    try:
+        if not os.path.isdir(data_path):
+            tar_data_path_1 = "dataset_1.tar.gz"
+            tar_data_path_2 = "dataset_2.tar.gz"
+            if os.path.isfile(tar_data_path_1) and \
+                    os.path.isfile(tar_data_path_2):
+                
+                print("Extracting dataset compressed data, this may take a few minutes...")
+                tar_data_1 = tarfile.open(tar_data_path_1)
+                tar_data_2 = tarfile.open(tar_data_path_2)
+                
+                tar_data_1.extractall(data_path)
+                tar_data_2.extractall(data_path)
+                tar_data_1.close()
+                tar_data_2.close()
+            else:
+                print("The data path provided doesn't exist, "
+                    f"neither do the compressed data files: {tar_data_path_1} and {tar_data_path_2}")
+                sys.exit(1)
+    except Exception as e:
+        print(f"Couldn't locate data or extract from {tar_data_path_1} and {tar_data_path_2}.")
+        sys.exit(1)
+
+    # match all jpg files in dataset path 
+    image_files = glob.glob(os.path.join(data_path, "*.%s" % ext))
     attribute_list = []
     
     for img_path in image_files:

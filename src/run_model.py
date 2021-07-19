@@ -7,6 +7,7 @@ Created on Mon Jun 21 15:35:13 2021
 from tensorflow.keras.models import model_from_json
 import tensorflow as tf
 import numpy as np
+import tarfile
 import cv2
 import sys
 import os
@@ -130,9 +131,13 @@ def start_video(model, model_vars):
             print('Prediction: ', text)
             counter = 0
         
-        # display the resulting frame
-        cv2.putText(**optimize_text(text, frame))
-        cv2.imshow(frame_title, frame)
+        try:
+            # display the resulting frame
+            cv2.putText(**optimize_text(text, frame))
+            cv2.imshow(frame_title, frame)
+        except:
+            counter = 49
+            continue
         
         # check if q pressed to quit program
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -143,7 +148,7 @@ def start_video(model, model_vars):
     cv2.destroyAllWindows()
 
 
-def get_model(path='saved_models/facenet_model'):
+def get_model(path):
     """Load pretrained CNN model from local directory
     
     Parameters
@@ -154,18 +159,32 @@ def get_model(path='saved_models/facenet_model'):
         model (Model): pretrained loaded tensorflow model
     """
     tf.keras.backend.clear_session()
-    json_path = os.path.join(path , "model.json")
-    h5_path = os.path.join(path, "weights.h5")
+
+    model_structure_path = os.path.join(path, "model.json")
+    model_weights_path = os.path.join(path, "weights.h5")
+
+    if not os.path.exists(model_weights_path):
+        tar_weights_path = model_weights_path[:-2] + "tar.gz"
+        if os.path.exists(tar_weights_path):
+            print(f"Extracting model weights from {tar_weights_path}.")
+            tar_data = tarfile.open(tar_weights_path)
+            tar_data.extractall(path)
+            tar_data.close()
+        else:
+            print("Error: Missing model weights .h5 file.")
+            sys.exit(1)            
+
     try:
-        with open(json_path, 'r') as f:
+        with open(model_structure_path, 'r') as f:
             loaded_json_model = f.read()
 
         model = model_from_json(loaded_json_model)
-        model.load_weights(h5_path)
+        model.load_weights(model_weights_path)
+
     except:
         e = sys.exc_info()[0]
         print("Error: ", e)
-        print(f"Couldn't load model. Check that {h5_path} and {json_path} exist")
+        print(f"Couldn't load model. Check that {model_weights_path} and {model_structure_path} exist")
         sys.exit(1)
     
     return model
@@ -220,16 +239,19 @@ def run_model(model_path, **args):
 
     Parameters
     ----------
-        model_path (str): path to saved trained model
+        model_path (str): name of model folder in 'saved_models'
         **args : arbitrary parameters from argsparse
     """
-    print("Getting model", flush=True)
+    if args['model_type'] == 'normal':
+       model_path = 'saved_models/normal_model'
+
+    print(f"Retrieving {args['model_type']} model...")
     model = get_model(model_path)
-    print("Model retrieved", flush=True)
+    print("Model retrieved.")
     model_vars = get_model_vars()
     # start video analysis using model
     if args.get('video', False):
-        print("starting video", flush=True)
+        print("starting video")
         start_video(model, model_vars)
     # if not video, then individual image will be analyzed
     else:
