@@ -10,6 +10,7 @@ pandas = "*"
 scikit-learn = "*"
 matplotlib = "*"
 scikit-image = "*"
+h5py = "*"
 
 [dev-packages]
 
